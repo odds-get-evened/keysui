@@ -1,8 +1,10 @@
 import dbm
 import hashlib
+import json
 import os.path
 import re
 import sys
+import time
 import tkinter as tk
 import warnings
 from pathlib import Path
@@ -55,15 +57,39 @@ class DBStuff:
     def insert_key(cls, key: pgpy.PGPKey):
         cls.check()
         with dbm.open(cls.DB_PATH.__str__(), 'c') as db:
-            h = hashlib.sha256().hexdigest()
-            db[h] = key.__str__()
-        print(f"key [{h}] successfully stored.")
+            h = hashlib.sha256(key.__bytes__()).hexdigest()
+            snapshot = {
+                'timestamp': time.time(),
+                'key': key.__str__()
+            }
+            db[h] = json.dumps(snapshot)
+            print(f"key [{h}] successfully stored.")
+
+    @classmethod
+    def get_all_keys(cls):
+        cls.check()
+        r = []
+        with dbm.open(cls.DB_PATH.__str__(), 'r') as db:
+            for i in db.keys():
+                r.append((i.decode(), db[i].decode()))
+
+        return r
+
+    @classmethod
+    def truncate(cls):
+        cls.check()
+        with dbm.open(cls.DB_PATH.__str__(), 'w') as db:
+            keys = list(db.keys())
+
+            for key in keys:
+                del db[key]
 
 
 class AppWin:
     PAD5 = 5
 
     def __init__(self):
+        self.key_tbl = None
         self.gen_ok_btn = None
         self.gen_pop = None
         self.confirm_gen_btn: ttk.Button = None
@@ -93,6 +119,9 @@ class AppWin:
         self.email_var = tk.StringVar()
         self.cmnt_var = tk.StringVar()
 
+        self.style = ttk.Style()
+        self.style.configure('KS.TFrame', background='red')
+
         self.build()
 
     def shutdown(self):
@@ -100,16 +129,34 @@ class AppWin:
         sys.exit(0)
 
     def build(self):
-        self.style = ttk.Style()
-
         self.build_right_frame()
 
     def build_right_frame(self):
-        self.r_frame = ttk.Frame(self.win, padding=10)
-        self.r_frame.grid(row=0, column=1, sticky='nsew')
+        self.r_frame = ttk.Frame(self.win, padding=10, style='KS.TFrame')
+        self.r_frame.grid(row=0, column=0, sticky='nsew')
 
         self.gen_btn = ttk.Button(self.r_frame, text="generate key", command=self.open_gen_win)
-        self.gen_btn.grid(row=0, column=0)
+        self.gen_btn.grid(row=0, column=0, sticky='w')
+
+        self.key_tbl = ttk.Treeview(self.r_frame)
+        self.key_tbl['show'] = 'headings'
+        self.key_tbl['columns'] = ('id', 'created')
+        self.key_tbl.column('id', width=50)
+        self.key_tbl.heading('id', text='ID')
+        self.key_tbl.heading('created', text='created')
+        self.key_tbl.grid(row=1, column=0, sticky='ew', pady=5)
+
+        # populate with existing keys
+        self.update_key_tbl()
+        self.key_tbl.bind('<<TreeviewSelect>>', self.on_key_selected)
+
+        self.r_frame.columnconfigure(0, weight=1)
+        self.win.columnconfigure(0, weight=1)
+
+    def on_key_selected(self, event: tk.Event):
+        tree = event.widget
+        selected = tree.selection()
+        [print(tree.item(x)['values']) for x in tree.selection()]
 
     def open_gen_win(self):
         self.gen_pop = tk.Toplevel(self.win)
@@ -164,7 +211,15 @@ class AppWin:
         # add key to user's local database
         DBStuff.insert_key(key)
 
+        self.update_key_tbl()
+
         self.gen_pop.destroy()
+
+    def update_key_tbl(self):
+        [self.key_tbl.delete(x) for x in self.key_tbl.get_children()]
+        keys = DBStuff.get_all_keys()
+
+        # [self.key_tbl.insert('', tk.END, values=x) for x in keys]
 
     def run(self):
         try:
@@ -191,6 +246,7 @@ class AppWin:
 
 def main():
     app = AppWin()
+    [print(x) for x in DBStuff.get_all_keys()]
     app.run()
 
 
